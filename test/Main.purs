@@ -87,6 +87,10 @@ main = do
     quickCheck $ fromString "ABCD" Hex === Just (withOctets pack [0xAB, 0xCD])
     -- this line is commented out as for invalid input result is `pack []` and shuold be fixed later
     -- quickCheck $ fromString "LOL" Hex === Nothing
+  
+    log "utf8"
+    quickCheck $ \(s :: String) -> fromUTF8 (toUTF8 s) === s
+  
 
   where
   subL a b = a - runQuotient b

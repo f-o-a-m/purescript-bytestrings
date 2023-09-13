@@ -2,20 +2,30 @@ module Test.Main
 ( main
 ) where
 
+import Data.ByteString (ByteString, Encoding(..), Octet, cons, empty, foldl, foldr, fromString, fromUTF8, head, init, isEmpty, last, length, map, pack, reverse, singleton, snoc, tail, toUTF8, uncons, unpack, unsnoc)
+import Prelude (Unit, bind, bottom, discard, flip, identity, pure, top, (#), ($), (&&), (+), (-), (/), (<), (<$>), (<*>), (<<<), (<>), (==), (>), (||))
+
+import Control.Monad.Gen (frequency)
+import Data.Array (foldMap)
+import Data.Enum (toEnumWithDefaults)
+import Data.Foldable as Foldable
+import Data.Int (toNumber)
+import Data.Maybe (Maybe(..))
+import Data.NonEmpty (NonEmpty(..))
+import Data.String (CodePoint, fromCodePointArray)
+import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Console (log)
-import Data.ByteString
-import Data.Foldable as Foldable
-import Data.Maybe (Maybe(..))
-import Prelude hiding (map)
 import Prelude as Prelude
-import Test.QuickCheck ((===), quickCheck)
+import Test.QuickCheck (class Arbitrary, arbitrary, quickCheck, (===))
+import Test.QuickCheck.Gen (arrayOf, chooseInt, suchThat)
 import Test.QuickCheck.Laws.Data.Eq (checkEq)
 import Test.QuickCheck.Laws.Data.Monoid (checkMonoid)
 import Test.QuickCheck.Laws.Data.Ord (checkOrd)
 import Test.QuickCheck.Laws.Data.Semigroup (checkSemigroup)
 import Type.Proxy (Proxy(..))
 import Type.Quotient (mkQuotient, runQuotient)
+
 
 main :: Effect Unit
 main = do
@@ -87,14 +97,44 @@ main = do
     quickCheck $ fromString "ABCD" Hex === Just (withOctets pack [0xAB, 0xCD])
     -- this line is commented out as for invalid input result is `pack []` and shuold be fixed later
     -- quickCheck $ fromString "LOL" Hex === Nothing
-  
     log "utf8"
-    quickCheck $ \(s :: String) -> fromUTF8 (toUTF8 s) === s
+    quickCheck $ \(BMPString s) -> fromUTF8 (toUTF8 s) === s
   
+    where
+    subL a b = a - runQuotient b
+    subR a b = runQuotient a - b
 
-  where
-  subL a b = a - runQuotient b
-  subR a b = runQuotient a - b
+newtype BMPString = BMPString String
+
+data UnicodeChar = Normal CodePoint | Surrogates CodePoint CodePoint
+
+instance Arbitrary BMPString where
+  arbitrary = BMPString <$> do 
+      ucs <- arrayOf (arbitrary @UnicodeChar)
+      pure $ fromCodePointArray $ foldMap f ucs
+    where
+      f :: UnicodeChar -> Array CodePoint
+      f uc = case uc of
+        Normal a -> [a]
+        Surrogates a b -> [a, b]
+
+instance Arbitrary UnicodeChar where
+  arbitrary = frequency $ NonEmpty (Tuple (1.0 - p) normalGen) [Tuple p surrogatesGen]
+
+    where 
+      hiLB = 0xD800
+      hiUB = 0xDBFF
+      loLB = 0xDC00
+      loUB = 0xDFFF
+      maxCP = 65535
+      toCP = toEnumWithDefaults bottom top 
+      -- must have a high surrogate followed by a low surrogate
+      surrogatesGen = Surrogates <$> (toCP <$> chooseInt hiLB hiUB) <*> (toCP <$> chooseInt loLB loUB)
+      normalGen = Normal <<< toCP <$> do
+        chooseInt 0 maxCP `suchThat` \n -> 
+          (n < hiLB || n > hiUB) && (n < loLB || n > loUB)
+      -- probability that you pick a surrogate from all possible codepoints
+      p = toNumber ((hiUB - hiLB  + 1) + (loUB - loLB + 1)) / toNumber (maxCP + 1)
 
 withOctet :: ∀ a. (Octet -> a) -> Int -> a
 withOctet = flip $ (#) <<< mkQuotient
